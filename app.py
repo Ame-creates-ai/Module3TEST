@@ -5,7 +5,7 @@ from PIL import Image, ImageColor
 import io
 
 # ==========================================
-# HELPER FUNCTIONS
+# I did use GPT to help me create the UI to make it nicer, and the whole code more organized. I completed all the notebooks from Module 3 as well. 
 # ==========================================
 
 def convert_image_to_bytes(img_array):
