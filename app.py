@@ -92,6 +92,22 @@ def remove_green_screen(image_pil, sensitivity):
 
 st.set_page_config(page_title="Image Processing Studio", layout="wide")
 st.title("🎨 Module 3 Watermarking & Transparancy")
+# --- START OF DESCRIPTION ---
+st.markdown(
+    """
+    **Project Demonstration:** This application demonstrates how to create a transparent digital signature 
+    from a photo and place it onto a document. 
+    
+    It also includes an interactive **Background Remover** tool with two modes: 
+    
+    * **Thresholding** (for white/dark backgrounds)
+    * **Green Chroma Screen** (for green backgrounds)
+    """
+)
+st.markdown(
+    """This application combines techniques from **Thresholding**, **Logical Operations**, and **Alpha Channels**."""
+)
+# --- END OF NEW DESCRIPTION ---
 
 tab1, tab2, tab3 = st.tabs(["✒️ E-Signature", "📄 Watermark", "✂️ Background Remover"])
 
