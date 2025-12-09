@@ -4,16 +4,16 @@ import numpy as np
 from PIL import Image, ImageColor
 import io
 
-# --- Helper Function to Download Images ---
+# ==========================================
+# HELPER FUNCTIONS
+# ==========================================
+
 def convert_image_to_bytes(img_array):
     """Converts a numpy array (OpenCV) to PNG bytes for download."""
-    # OpenCV uses BGR, PIL uses RGB. We need to convert before saving via PIL.
     # Check if image has Alpha channel (4 channels) or just 3.
     if img_array.shape[2] == 4: 
-        # BGRA -> RGBA
         img_array = cv2.cvtColor(img_array, cv2.COLOR_BGRA2RGBA)
     else:
-        # BGR -> RGB
         img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
         
     pil_img = Image.fromarray(img_array)
@@ -21,148 +21,166 @@ def convert_image_to_bytes(img_array):
     pil_img.save(buf, format="PNG")
     return buf.getvalue()
 
-st.set_page_config(page_title="E-Signature & Watermark App", layout="wide")
+def process_signature(image_pil, threshold_val, tint_color_hex, tint_intensity):
+    """
+    Logic from application_e_signature.py:
+    Grayscale -> Threshold -> Tint -> Merge Alpha
+    """
+    # 1. Read and Convert
+    img_np = np.array(image_pil)
+    # Handle if image is already RGBA or Grayscale, force to BGR
+    if len(img_np.shape) == 2:
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
+    elif img_np.shape[2] == 4:
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGR)
+    else:
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
 
-st.title(" ✒️ E-Signature & Watermark Studio")
-st.markdown("Use the tabs below to switch between creating a signature and watermarking a document.")
+    # 2. Grayscale
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-tab1, tab2 = st.tabs(["1. E-Signature Generator", "2. Watermark Document"])
+    # 3. Create Alpha Mask (Thresholding)
+    # Invert so ink is white (255) and paper is black (0)
+    _, alpha_mask = cv2.threshold(gray, threshold_val, 255, cv2.THRESH_BINARY_INV)
+
+    # 4. Enhance Color (Tinting)
+    c_rgb = ImageColor.getcolor(tint_color_hex, "RGB")
+    c_bgr = (c_rgb[2], c_rgb[1], c_rgb[0]) # Flip to BGR
+    
+    color_mask = np.full_like(img_bgr, c_bgr)
+    
+    # Blend original ink with color mask
+    sig_color = cv2.addWeighted(img_bgr, 1 - tint_intensity, color_mask, tint_intensity, 0)
+    
+    # 5. Merge Channels
+    b, g, r = cv2.split(sig_color)
+    final_png = cv2.merge([b, g, r, alpha_mask])
+    
+    return final_png, alpha_mask
+
+def remove_background(image_pil, threshold_val):
+    """
+    Logic from Alpha_Channel.ipynb:
+    Grayscale -> Threshold -> Alpha Channel (No Tinting)
+    """
+    img_np = np.array(image_pil)
+    if img_np.shape[2] == 4:
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGR)
+    else:
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
+    # 1. Grayscale
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    
+    # 2. Create Mask
+    _, alpha_mask = cv2.threshold(gray, threshold_val, 255, cv2.THRESH_BINARY_INV)
+    
+    # 3. Merge
+    b, g, r = cv2.split(img_bgr)
+    return cv2.merge([b, g, r, alpha_mask])
 
 # ==========================================
-# TAB 1: E-SIGNATURE (Logic from application_e_signature.py)
+# MAIN APP LAYOUT
 # ==========================================
+
+st.set_page_config(page_title="Image Processing Studio", layout="wide")
+st.title("🎨 Image Processing Studio")
+st.markdown("This application combines techniques from **Thresholding**, **Logical Operations**, and **Alpha Channels**.")
+
+# Create 3 Tabs
+tab1, tab2, tab3 = st.tabs(["✒️ E-Signature", "📄 Watermark", "✂️ Background Remover"])
+
+# --- TAB 1: E-SIGNATURE ---
 with tab1:
-    st.header("1. Create E-Signature")
-    st.markdown("This tool follows the steps from your notebook: **Grayscale -> Threshold -> Tint -> Merge Alpha**.")
+    st.header("1. Create Digital Signature")
+    st.info("Extracts ink from paper, tints it, and makes it transparent.")
     
-    # Upload
-    uploaded_sig = st.file_uploader("Upload Signature Photo", type=['jpg', 'jpeg', 'png'], key="sig_upload")
+    sig_file = st.file_uploader("Upload Signature", type=['jpg', 'png', 'jpeg'], key="sig")
     
-    if uploaded_sig:
-        # 1. READ IMAGE
-        # Convert uploaded file to OpenCV format
-        file_bytes = np.asarray(bytearray(uploaded_sig.read()), dtype=np.uint8)
-        sig_org = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    if sig_file:
+        original = Image.open(sig_file)
         
-        # Display Original
-        col_orig, col_proc = st.columns(2)
-        with col_orig:
-            st.subheader("Original Image")
-            st.image(cv2.cvtColor(sig_org, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.image(original, caption="Original", use_container_width=True)
+            st.markdown("### Settings")
+            thresh = st.slider("Threshold (Sensitivity)", 0, 255, 150, key="sig_thresh")
+            color = st.color_picker("Ink Color", "#0000FF", key="sig_color")
+            intensity = st.slider("Tint Intensity", 0.0, 1.0, 1.0, key="sig_int")
             
-            # CONTROLS
-            st.markdown("---")
-            st.markdown("### Controls")
-            
-            # Threshold slider (Interactive version of the hardcoded 150)
-            thresh_val = st.slider("Threshold Value", 0, 255, 150, help="Adjust until background is removed.")
-            
-            # Tint Color Picker (Interactive version of the blue mask)
-            tint_color_hex = st.color_picker("Signature Ink Color", "#0000FF") # Default to Blue like notebook
+        # Process
+        result_bgra, mask = process_signature(original, thresh, color, intensity)
         
-        # --- PROCESSING STEPS FROM NOTEBOOK ---
-        
-        # 2. GRAYSCALE
-        # notebook: sig_gray = cv2.cvtColor(sig, cv2.COLOR_BGR2GRAY)
-        sig_gray = cv2.cvtColor(sig_org, cv2.COLOR_BGR2GRAY)
-        
-        # 3. THRESHOLD (ALPHA MASK)
-        # notebook: ret, alpha_mask = cv2.threshold(sig_gray, 150, 255, cv2.THRESH_BINARY_INV)
-        # We use the slider value 'thresh_val' instead of hardcoded 150
-        ret, alpha_mask = cv2.threshold(sig_gray, thresh_val, 255, cv2.THRESH_BINARY_INV)
-        
-        # 4. ENHANCE COLOR (TINTING)
-        # notebook uses a blue_mask and addWeighted.
-        
-        # Convert hex color to BGR tuple for OpenCV
-        c_rgb = ImageColor.getcolor(tint_color_hex, "RGB")
-        c_bgr = (c_rgb[2], c_rgb[1], c_rgb[0]) # Flip to BGR
-        
-        # notebook: blue_mask = sig.copy(); blue_mask[:, :] = (255, 0, 0)
-        color_mask = sig_org.copy()
-        color_mask[:, :] = c_bgr 
-        
-        # notebook: sig_color = cv2.addWeighted(sig, 1, blue_mask, 0.5, 0)
-        # We allow user to adjust the blending intensity (alpha weight)
-        tint_intensity = st.slider("Tint Intensity", 0.0, 1.0, 0.5)
-        sig_color = cv2.addWeighted(sig_org, 1 - tint_intensity, color_mask, tint_intensity, 0)
-        
-        # 5. SPLIT AND MERGE CHANNELS
-        # notebook: b, g, r = cv2.split(sig_color)
-        b, g, r = cv2.split(sig_color)
-        
-        # notebook: new = [b, g, r, alpha_mask]
-        # notebook: png = cv2.merge(new, 4)
-        new_channels = [b, g, r, alpha_mask]
-        final_png = cv2.merge(new_channels)
-        
-        # --- DISPLAY RESULT ---
-        with col_proc:
-            st.subheader("Processed Result")
-            # Must convert BGRA (OpenCV) to RGBA (Streamlit/PIL)
-            st.image(cv2.cvtColor(final_png, cv2.COLOR_BGRA2RGBA), use_container_width=True)
-            
-            # Download Button
-            btn = st.download_button(
-                label="Download Transparent Signature",
-                data=convert_image_to_bytes(final_png),
-                file_name="my_esignature.png",
-                mime="image/png"
-            )
-            
-            # Debug: Show the mask being used
-            with st.expander("See Alpha Mask (Debug)"):
-                st.image(alpha_mask, caption="Alpha Mask (White=Keep)", clamp=True)
+        with c2:
+            st.image(cv2.cvtColor(result_bgra, cv2.COLOR_BGRA2RGBA), caption="Result", use_container_width=True)
+            st.download_button("Download Signature", convert_image_to_bytes(result_bgra), "signature.png", "image/png")
+            with st.expander("View Mask"):
+                st.image(mask, clamp=True)
 
-# ==========================================
-# TAB 2: WATERMARK (Standard Overlay Logic)
-# ==========================================
+# --- TAB 2: WATERMARK ---
 with tab2:
     st.header("2. Watermark Document")
+    st.info("Overlays a transparent image (like your signature) onto a document.")
     
-    col_main, col_controls = st.columns([2, 1])
-    
-    with col_controls:
-        main_file = st.file_uploader("Upload Document", type=['jpg', 'png', 'jpeg'], key="wm_main")
-        watermark_file = st.file_uploader("Upload Watermark (PNG)", type=['png', 'jpg'], key="wm_logo")
+    c_main, c_ctrl = st.columns([2, 1])
+    with c_ctrl:
+        main_doc = st.file_uploader("Document", type=['jpg', 'png'], key="wm_doc")
+        wm_logo = st.file_uploader("Watermark", type=['png'], key="wm_img")
         
-        if main_file and watermark_file:
-            st.markdown("#### Settings")
-            scale = st.slider("Watermark Scale", 0.1, 2.0, 0.3)
-            opacity = st.slider("Opacity", 0.0, 1.0, 0.7)
-            pos_x = st.slider("X Position", 0, 100, 50)
-            pos_y = st.slider("Y Position", 0, 100, 50)
+        if main_doc and wm_logo:
+            scale = st.slider("Size", 0.1, 2.0, 0.3)
+            opacity = st.slider("Opacity", 0.0, 1.0, 0.8)
+            x_pos = st.slider("X Position %", 0, 100, 80)
+            y_pos = st.slider("Y Position %", 0, 100, 80)
 
-    with col_main:
-        if main_file and watermark_file:
-            # We use PIL here for easier alpha compositing
-            base_img = Image.open(main_file).convert("RGBA")
-            wm_img = Image.open(watermark_file).convert("RGBA")
+    with c_main:
+        if main_doc and wm_logo:
+            base = Image.open(main_doc).convert("RGBA")
+            watermark = Image.open(wm_logo).convert("RGBA")
             
             # Resize
-            wm_w, wm_h = wm_img.size
-            new_w = int(wm_w * scale)
-            new_h = int(wm_h * scale)
-            wm_img = wm_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            w, h = watermark.size
+            watermark = watermark.resize((int(w * scale), int(h * scale)))
             
             # Opacity
-            r, g, b, a = wm_img.split()
+            r, g, b, a = watermark.split()
             a = a.point(lambda p: int(p * opacity))
-            wm_img = Image.merge('RGBA', (r, g, b, a))
+            watermark = Image.merge('RGBA', (r, g, b, a))
             
             # Position
-            bg_w, bg_h = base_img.size
-            x = int((bg_w - new_w) * (pos_x / 100))
-            y = int((bg_h - new_h) * (pos_y / 100))
+            bw, bh = base.size
+            x = int((bw - watermark.size[0]) * (x_pos/100))
+            y = int((bh - watermark.size[1]) * (y_pos/100))
             
             # Composite
-            combined = Image.new('RGBA', base_img.size)
-            combined = Image.alpha_composite(base_img, combined)
-            combined.paste(wm_img, (x, y), wm_img)
+            final = Image.new('RGBA', base.size)
+            final = Image.alpha_composite(base, final)
+            base.paste(watermark, (x, y), watermark)
             
-            st.image(combined, use_container_width=True)
+            st.image(base, caption="Watermarked Document", use_container_width=True)
             
-            # Download
+            # Save
             buf = io.BytesIO()
-            combined.save(buf, format="PNG")
-            st.download_button("Download Watermarked Doc", buf.getvalue(), "watermarked.png", "image/png")
+            base.save(buf, format="PNG")
+            st.download_button("Download Result", buf.getvalue(), "watermarked.png", "image/png")
+
+# --- TAB 3: BACKGROUND REMOVER ---
+with tab3:
+    st.header("3. Background Remover")
+    st.info("Removes the background from any image (creates Alpha Channel).")
+    
+    bg_file = st.file_uploader("Upload Image", type=['jpg', 'png'], key="bg_rem")
+    
+    if bg_file:
+        bg_orig = Image.open(bg_file)
+        
+        bc1, bc2 = st.columns(2)
+        with bc1:
+            st.image(bg_orig, caption="Original", use_container_width=True)
+            bg_thresh = st.slider("Threshold", 0, 255, 150, key="bg_thresh")
+            
+        result_bg_removed = remove_background(bg_orig, bg_thresh)
+        
+        with bc2:
+            st.image(cv2.cvtColor(result_bg_removed, cv2.COLOR_BGRA2RGBA), caption="Transparent Result", use_container_width=True)
+            st.download_button("Download PNG", convert_image_to_bytes(result_bg_removed), "transparent.png", "image/png")
