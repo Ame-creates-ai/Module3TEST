@@ -47,12 +47,18 @@ def process_signature(image_pil, threshold_val, tint_color_hex, tint_intensity):
 def remove_background_threshold(image_pil, threshold_val):
     """ Removes light/dark backgrounds using Grayscale Thresholding """
     img_np = np.array(image_pil)
-    if img_np.shape[2] == 4: img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGR)
-    else: img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2RGB)
+    # Convert from RGB (PIL) to BGR (OpenCV)
+    if img_np.shape[2] == 4: 
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGR)
+    else: img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR) 
 
+    # 1. Grayscale
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    
+    # 2. Create Mask
     _, alpha_mask = cv2.threshold(gray, threshold_val, 255, cv2.THRESH_BINARY_INV)
     
+    # 3. Merge
     b, g, r = cv2.split(img_bgr)
     return cv2.merge([b, g, r, alpha_mask])
 
@@ -85,7 +91,7 @@ def remove_green_screen(image_pil, sensitivity):
 # ==========================================
 
 st.set_page_config(page_title="Image Processing Studio", layout="wide")
-st.title("🎨 Image Processing Studio")
+st.title("🎨 Module 3 Watermarking & Transparancy")
 
 tab1, tab2, tab3 = st.tabs(["✒️ E-Signature", "📄 Watermark", "✂️ Background Remover"])
 
